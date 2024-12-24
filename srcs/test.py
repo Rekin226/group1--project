@@ -9,4 +9,5 @@ def test():
 
 if __name__ == "__main__":
     test()
-print("hello")
+# Add hello print
+print("hello, this is just a test")
