@@ -6,6 +6,8 @@ Created on Tue Nov 26 12:25:24 2024
 """
 
 import pandas as pd
+import beautifulsoup as bs
+
 df = pd.DataFrame({
     "topic": ["Plant Care"],
     "subtopic": ["Plant nutrients"],
@@ -13,6 +15,29 @@ df = pd.DataFrame({
     "tags": ["gas exchange, light response curves"],
     "source": ["https://dx.doi.org/10.3390/horticulturae9030291"]
 })
+
+# read html
+html_path = df["source"].values[0]
+print('The path for the html is: ', html_path)
+
+
+# Extract text from a URL
+url = html_path
+response = requests.get(url)
+soup = BeautifulSoup(response.text, 'html.parser')
+text = soup.get_text()
+print(text)
+
+# Create a function to extract text from a URLˆ
+def extract_text_from_url(url):
+    response = requests.get(url)
+    soup = BeautifulSoup(response.text, 'html.parser')
+    text = soup.get_text()
+    return text
+
+
+
+
 
 
 
