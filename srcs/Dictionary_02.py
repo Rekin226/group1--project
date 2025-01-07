@@ -13,7 +13,7 @@ df = pd.DataFrame({
     "tags": ["gas exchange, light response curves"],
     "source": ["https://dx.doi.org/10.3390/horticulturae9030291"]
 })
-
+print(df["source"])
 
 
 
