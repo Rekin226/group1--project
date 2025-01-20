@@ -37,9 +37,14 @@ documents = [
 
 print(f"Added {len(documents)} documents to the vector store.")
 print(f"FAISS index size: {index.ntotal}")
-query = "Plant Care"
-results = vector_store.similarity_search(query)
-print(f"Search results: {results}")
+
+# Check if the FAISS index is empty before performing a similarity search
+if index.ntotal == 0:
+    print("FAISS index is empty. No documents to search.")
+else:
+    query = "Plant Care"
+    results = vector_store.similarity_search(query)
+    print(f"Search results: {results}")
 
 # Generate unique IDs for the documents
 uuids = [str(uuid4()) for _ in range(len(documents))]
@@ -51,12 +56,13 @@ print(f"Added {len(documents)} documents to the vector store.")
 print(f"FAISS index size: {index.ntotal}")
 
 # Perform similarity search
-results = vector_store.similarity_search_with_score(
-    "What is nutrient levels?", k=1, filter={"content": "nutrient levels"}
-)
+if index.ntotal == 0:
+    print("FAISS index is empty. No documents to search.")
+else:
+    results = vector_store.similarity_search_with_score(
+        "What is nutrient levels?", k=1, filter={"content": "nutrient levels"}
+    )
 
-# Print the results
-for res, score in results:
-    print(f"* [SIM={score:.3f}] {res.page_content} [{res.metadata}]")
-
-
+    # Print the results
+    for res, score in results:
+        print(f"* [SIM={score:.3f}] {res.page_content} [{res.metadata}]")

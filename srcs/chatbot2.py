@@ -11,29 +11,72 @@ import concurrent.futures
 import requests
 from bs4 import BeautifulSoup
 import requests_cache
+import json
 
 # Enable caching
 requests_cache.install_cache('web_cache', expire_after=86400)  # Cache expires after 1 day
 
-# List of target URLs (you can add more URLs to this list)
-urls = [
-    "https://doi.org/10.1186/s13213-020-01613-5",
-    "https://doi.org/10.1016/j.inpa.2021.12.001"  # Add more URLs here
-]
-
 # Function to load a single web page
 def load_web_page(url):
-    print(f"Loading URL: {url}")
-    loader = WebBaseLoader(url)
-    documents = loader.load()
-    return documents
+    try:
+        print(f"Loading URL: {url}")
+        loader = WebBaseLoader(url)
+        documents = loader.load()
+        return documents
+    except requests.exceptions.RequestException as e:
+        print(f"Error loading {url}: {e}")
+        return None
 
 # Function to extract text from a URL
 def extract_text_from_url(url):
-    response = requests.get(url)
-    soup = BeautifulSoup(response.text, 'lxml')
-    text = soup.get_text()
-    return text
+    try:
+        response = requests.get(url)
+        response.raise_for_status()  # Raise an exception for HTTP errors
+        soup = BeautifulSoup(response.text, 'html.parser')
+        text = soup.get_text()
+        return text
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching {url}: {e}")
+        return None
+
+# Function to handle different document formats
+def handle_document_format(url):
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        content_type = response.headers.get('Content-Type')
+        if 'html' in content_type:
+            soup = BeautifulSoup(response.text, 'html.parser')
+            text = soup.get_text()
+        elif 'pdf' in content_type:
+            # Handle PDF format
+            text = "PDF content handling not implemented yet."
+        else:
+            text = "Unsupported document format."
+        return text
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching {url}: {e}")
+        return None
+
+# Function to load URLs from a file
+def load_urls_from_file(file_path):
+    with open(file_path, 'r') as file:
+        urls = file.read().splitlines()
+    return urls
+
+# Function to fetch URLs from an API
+def fetch_urls_from_api(api_url):
+    try:
+        response = requests.get(api_url)
+        response.raise_for_status()
+        urls = response.json()
+        return urls
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching URLs from API: {e}")
+        return []
+
+# Load URLs from a file instead of hardcoding
+urls = load_urls_from_file('urls.txt')
 
 # Step 1: Load all web pages as documents in parallel.
 all_documents = []
