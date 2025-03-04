@@ -3,5 +3,3 @@ langchain
 langchain_community
 faiss-cpu
 sentence-transformers
-requests_cache
-pandas
