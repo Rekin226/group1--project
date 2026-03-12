@@ -667,7 +667,7 @@ def update_known_facts_from_followup(user: str) -> None:
 last_bot = ""
 
 
-def handle_turn(user: str):
+def handle_turn(user: str) -> str:
     global last_bot
 
     # Best-effort: turn short follow-up replies into structured facts.
@@ -688,8 +688,7 @@ def handle_turn(user: str):
     if state.mode == "REFINEMENT":
         ans = refine_answer(user)
         state.last_answer = ans
-        print(ans)
-        return
+        return ans
 
     # =========================================================================
     # FAQ ROUTER INTEGRATION
@@ -703,9 +702,8 @@ def handle_turn(user: str):
     if "FAQ" in router_intent:
         context = retrieve_context(VECTORSTORE, user)
         ans = llm.invoke(faq_prompt.format_messages(c=context, u=user))
-        print(f"\n[AI Knowledge] {ans}\n")
         state.last_answer = ans
-        return
+        return ans
     # =========================================================================
 
     data = decision_model(user)
@@ -731,14 +729,26 @@ def handle_turn(user: str):
         state.pending_questions = qs[:budget]
         for q in state.pending_questions:
             state.asked_questions.append(q)
-            print("Q:", q)
-        return
+
+        if state.pending_questions:
+            lines = [f"{i}. {q}" for i, q in enumerate(state.pending_questions, start=1)]
+            msg = "I need a bit more information to help:\n" + "\n".join(lines)
+        else:
+            msg = "I need a bit more information to help. Can you share more details?"
+        state.last_answer = msg
+        return msg
 
     # answer
     ans = complex_reason(user)
     state.mode = "REFINEMENT"
     state.last_answer = ans
-    print(ans)
+    return ans
+
+
+def reset_state() -> None:
+    global last_bot
+    state.reset()
+    last_bot = ""
 
 
 def build_rag_index_from_urls() -> Optional[FAISS]:
@@ -772,7 +782,8 @@ def chat():
         u = input("You> ")
         if u == "exit":
             break
-        handle_turn(u)
+        ans = handle_turn(u)
+        print(ans)
         last_bot = state.last_answer
 
 
