@@ -156,18 +156,21 @@ def complex_node(state: AquaponicsState):
     context = "\n\n---\n\n".join(context_parts)
 
     # ==========================================
-    # 2. 針對「診斷」任務的動態多輪 Prompt
+    # 2. 泛用型「診斷」任務 Prompt
     # ==========================================
+
     if task_type == "diagnostic":
         system_prompt = f"""You are a strict Aquaponics troubleshooting diagnostic AI.
-TASK: Assess the user's symptoms against the Context using the process of strict ELIMINATION.
+TASK: Assess the user's symptoms against the Context using strict ELIMINATION.
 
 CRITICAL RULES:
-1. MATCHING: Identify conditions in the Context that share the user's symptoms.
-2. ELIMINATION (CRITICAL): You MUST actively eliminate conditions that CONTRADICT the user's specific symptoms. For example, if the user states "dark brown gills", you MUST eliminate conditions that specify "pale gills" (like Flukes) or do not mention brown gills.
-3. COUNT: Count the REMAINING conditions that perfectly align with ALL provided specific symptoms without any contradictions.
+1. MATCHING: Identify all conditions/diseases in the Context that share ANY of the user's stated symptoms.
+2. STRICT ELIMINATION: You MUST actively evaluate EVERY single condition found in the Context against the user's input.
+   - Rule A (Contradiction): If a condition's environment, root cause, or specific symptoms clearly contradict the user's input, ELIMINATE IT.
+   - Rule B (Missing Specifics): If the user provides a highly specific symptom and the condition does NOT mention it, ELIMINATE IT.
+3. COUNT: Count the REMAINING conditions.
 4. STATUS DECISION:
-   - If the Remaining Count is 2 or more, or 0, output **STATUS**: ASK.
+   - If the Remaining Count is > 1 or 0, output **STATUS**: ASK.
    - ONLY if the Remaining Count is EXACTLY 1, output **STATUS**: SOLVE.
 
 Context:
@@ -180,42 +183,53 @@ You MUST structure your response EXACTLY as follows:
 
 **ANALYSIS**:
 - Confirmed Symptoms: [List the user's exact stated symptoms]
-- Eliminated Conditions: [List conditions you removed and briefly explain WHY. e.g., "Monogenean Flukes eliminated because user reported dark brown gills, whereas Flukes cause pale gills."]
+- Eliminated Conditions: 
+  * [Condition from Context]: Eliminated because [reason based on strict mismatch]
 - Remaining Conditions: [List the exact names of the surviving conditions]
-- Remaining Count: [Number of conditions listed in Remaining Conditions]
+- Remaining Count: [Number]
 
-**STATUS**: [ASK if Remaining Count is not 1. SOLVE if Remaining Count is exactly 1]
+**STATUS**: [ASK or SOLVE]
 
 [If STATUS is ASK, output:]
 **QUESTIONS**:
-- [Ask 1-2 highly specific questions to differentiate the remaining conditions]
+- [Ask 1-2 specific questions to differentiate the remaining conditions]
 
 [If STATUS is SOLVE, output:]
-**DIAGNOSIS**: [Exact name of the disease/issue]
+**DIAGNOSIS**: [Exact name]
 **ROOT CAUSE**: [Extract from context]
 **SOLUTION**: [Extract from context]
 """
         messages_to_llm = [SystemMessage(content=system_prompt)] + state.get("messages", [])
         response = llm.invoke(messages_to_llm)
         
-        # 攔截邏輯保持不變
         if "**STATUS**: SOLVE" in response.content:
             return {"messages": state.get("messages", []) + [AIMessage(content=response.content)], "follow_up_count": 0, "mode": "simple"}
         else:
             return {"messages": state.get("messages", []) + [AIMessage(content=response.content)], "follow_up_count": count + 1}
             
     # ==========================================
-    # 3. 針對「設計」任務 (保留舊有寫死次數的邏輯)
+    # 3. 泛用型「設計」任務 Prompt 與簡化護欄
     # ==========================================
     elif task_type == "design":
-        system_prompt = f"""You are a strict Aquaponics System Architect AI.
-TASK: Recommend the optimal system architecture (DWC, NFT, or Media-Based) based ONLY on the Context.
+        system_prompt = f"""You are an expert Aquaponics System Architect AI.
+TASK: Recommend the optimal system architecture and provide EITHER a design guide OR a cost estimate based on the user's intent and Context.
 
 CRITICAL RULES:
-1. MANDATORY CONSTRAINTS: You CANNOT design a system without knowing BOTH the 'Target Crop' and the 'Space/Weight Limitations'.
-2. STRICT EVALUATION: If the user's input does NOT explicitly name a crop (e.g., tomatoes, lettuce) or a space/weight constraint (e.g., balcony, backyard), you MUST output 'No'. Do not guess or assume.
-3. ROOFTOP RULE: If the user mentions "rooftop", "balcony", or "weight limit", you MUST eliminate Media-Based and DWC.
-4. FRUIT RULE: If the user mentions "fruiting plants" or "tomatoes", you MUST eliminate NFT.
+1. SHORT-CIRCUIT BLOCK (CRITICAL): If the user provides ZERO specific constraints (e.g., no crop type, no space limits), you MUST extract 'None'. 
+   -> If Extracted Constraints is 'None', ALL architectures MUST be marked as 'Pending' and you MUST output **STATUS**: ASK. Do NOT guess or assume any Fit.
+2. STRICT EVALUATION & PHYSICAL RULES:
+   - You MUST evaluate constraints against the Context. Narrow down to EXACTLY ONE architecture (DWC, NFT, or Media-Based).
+   - ROOFTOP/WEIGHT RULE: If the user mentions "rooftop", "balcony", "space-constrained", or "weight limit", you MUST eliminate DWC and Media-Based. You MUST choose NFT.
+   - FRUIT RULE: If the user mentions "fruiting plants" or "tomatoes", you MUST eliminate NFT.
+3. INTENT DETECTION: Determine if the user is asking "How to build/design" (Intent: BUILD) OR "How much it costs" (Intent: COST).
+4. ZERO HALLUCINATION (CRITICAL): 
+   - For SOLVE_COST: Extract EXACT prices from 'Economic Variables'.
+   - For SOLVE_DESIGN: You MUST extract the 'Required Materials List' and 'Step-by-Step Assembly Process' belonging ONLY to the chosen architecture. NEVER mix DWC materials into a Media-Based design.
+5. STATUS DECISION:
+   - If constraints are 'None' or insufficient: output **STATUS**: ASK.
+   - If requirements are physically incompatible: output **STATUS**: CONFLICT.
+   - If EXACTLY ONE architecture fits AND user wants to build/design: output **STATUS**: SOLVE_DESIGN.
+   - If EXACTLY ONE architecture fits AND user wants a cost estimate: output **STATUS**: SOLVE_COST.
 
 Context:
 {context}
@@ -223,73 +237,52 @@ Context:
 Original Request: {original_problem}
 Current User Input: {query}
 
-You MUST structure your response EXACTLY as follows (DO NOT use brackets around Yes/No):
+You MUST structure your response EXACTLY as follows:
 
 **ANALYSIS**:
-- Target Crop Known: Yes or No
-- Space/Weight Known: Yes or No
-- Rooftop Rule Triggered: Yes or No
-- Fruit Rule Triggered: Yes or No
-- Remaining Architectures: [List surviving architectures. If none, write None]
+- Extracted Constraints: [List extracted requirements. Write 'None' if none]
+- User Intent: [BUILD or COST]
+- Architecture Evaluation:
+  * DWC: [Fit / No Fit / Pending] because [reason]
+  * NFT: [Fit / No Fit / Pending] because [reason]
+  * Media-Based: [Fit / No Fit / Pending] because [reason]
+  (Note: If constraints are 'None', all MUST be 'Pending')
 
-**STATUS**: [ASK / CONFLICT / SOLVE]
+**STATUS**: [ASK / CONFLICT / SOLVE_DESIGN / SOLVE_COST]
 
 [If STATUS is ASK, output:]
 **QUESTIONS**:
-- [Ask specific questions to gather the missing constraints]
+- [Ask 1-3 specific questions to gather missing constraints]
 
 [If STATUS is CONFLICT, output:]
-**EXPLANATION**: [Explain why constraints contradict based on context]
-**SUGGESTION**: Please adjust either your target crop or your location limitations.
+**EXPLANATION**: [Explain why constraints contradict based on physical rules]
+**SUGGESTION**: [Suggest a compromise]
 
-[If STATUS is SOLVE, output:]
+[If STATUS is SOLVE_DESIGN, output:]
 **RECOMMENDED ARCHITECTURE**: [Exact name]
-**KEY MECHANICS**: [Extract functional details]
-**ECONOMIC VARIABLES & COSTS**: [Extract exact prices, costs, and lifespans]
+**WHY IT FITS YOU**: [Explain why based on characteristics]
+**REQUIRED MATERIALS**:
+[CRITICAL: Extract the bulleted list EXACTLY from the 'Required Materials List' section belonging ONLY to the chosen architecture in the Context. Do NOT paraphrase.]
+**CONSTRUCTION STEPS**:
+[CRITICAL: Extract the numbered steps EXACTLY from the 'Step-by-Step Assembly Process' section belonging ONLY to the chosen architecture in the Context. Do NOT paraphrase.]
+
+[If STATUS is SOLVE_COST, output:]
+**RECOMMENDED ARCHITECTURE**: [Exact name]
+**WHY IT FITS YOU**: [Explain why based on characteristics]
+**COST ESTIMATE TABLE**:
+[Generate a Markdown table listing each component, expected lifespan, and cost range STRICTLY from 'Economic Variables'.]
+**TOTAL ESTIMATE SUMMARY**:
+[Summarize the estimated total capital investment and performance benchmarks based ONLY on the Context.]
 """
         messages_to_llm = [SystemMessage(content=system_prompt)] + state.get("messages", [])
         response = llm.invoke(messages_to_llm)
         content = response.content
         
-        # ==========================================
-        # 程式碼護欄 (Programmatic Guardrail) - 終極防線
-        # ==========================================
-        # 清理可能被 LLM 誤加的中括號，確保字串比對準確
-        clean_content = content.replace("[", "").replace("]", "")
-        
-        missing_crop = "Target Crop Known: No" in clean_content
-        missing_space = "Space/Weight Known: No" in clean_content
-        
-        rooftop_triggered = "Rooftop Rule Triggered: Yes" in clean_content
-        fruit_triggered = "Fruit Rule Triggered: Yes" in clean_content
-        
-        # 1. 攔截：零解狀態 (Zero-Solution Conflict)
-        if rooftop_triggered and fruit_triggered:
-            print("\n[System Guardrail] 攔截到物理條件衝突！發布 CONFLICT。")
-            conflict_msg = "**STATUS**: CONFLICT\n\n"
-            conflict_msg += "**EXPLANATION**: Based on the aquaponics engineering constraints, your requirements are physically incompatible.\n"
-            conflict_msg += "1. Growing heavy fruiting plants requires Media-Based systems. NFT must be eliminated due to root clogging risks.\n"
-            conflict_msg += "2. Strict weight limits eliminate Media-Based systems and DWC systems.\n"
-            conflict_msg += "**SUGGESTION**: You must make a design compromise. Either switch your target crop to 'leafy greens' or move to a ground-level space."
-            return {"messages": state.get("messages", []) + [AIMessage(content=conflict_msg)], "follow_up_count": 0, "mode": "simple"}
-
-        # 2. 攔截：資訊不足 (Missing Constraints)
-        if missing_crop or missing_space:
-            print("\n[System Guardrail] 攔截到資訊不足，啟動強制提問。")
-            dynamic_questions = []
-            if missing_crop:
-                dynamic_questions.append("- What is your specific target crop (e.g., leafy greens, fruiting plants)?")
-            if missing_space:
-                dynamic_questions.append("- What are your space and weight limitations (e.g., rooftop, backyard)?")
-            
-            questions_str = "\n".join(dynamic_questions)
-            # 覆寫 LLM 內容，強制轉換為 ASK 狀態
-            override_content = content.split("**STATUS**: ")[0] + f"**STATUS**: ASK\n\n**QUESTIONS**:\n{questions_str}"
-            
-            return {"messages": state.get("messages", []) + [AIMessage(content=override_content)], "follow_up_count": count + 1}
-        
-        # 3. 正常流程路由
-        if "**STATUS**: SOLVE" in content:
+        # 狀態機攔截邏輯
+        if "**STATUS**: CONFLICT" in content:
+            print("\n[System] 偵測到設計條件衝突，返回結果並重置追問狀態。")
+            return {"messages": state.get("messages", []) + [AIMessage(content=content)], "follow_up_count": 0, "mode": "simple"}
+        elif "**STATUS**: SOLVE_DESIGN" in content or "**STATUS**: SOLVE_COST" in content:
             return {"messages": state.get("messages", []) + [AIMessage(content=content)], "follow_up_count": 0, "mode": "simple"}
         else:
             return {"messages": state.get("messages", []) + [AIMessage(content=content)], "follow_up_count": count + 1}
