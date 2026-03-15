@@ -292,142 +292,70 @@ You MUST structure your response EXACTLY as follows (DO NOT use brackets around 
         if "**STATUS**: SOLVE" in content:
             return {"messages": state.get("messages", []) + [AIMessage(content=content)], "follow_up_count": 0, "mode": "simple"}
         else:
-            temp = _parse_temperature_c(user)
-            if temp is not None:
-                state.known_facts["temperature_c"] = temp
+            return {"messages": state.get("messages", []) + [AIMessage(content=content)], "follow_up_count": count + 1}
+        
+# ==========================================
+# 3. Build and Compile State Machine (StateGraph Execution)
+# ==========================================
+def route_entry(state: AquaponicsState):
+    return "complex_node" if state.get("follow_up_count", 0) > 0 else "router_node"
 
-    if "pH" not in state.known_facts:
-        ph = _parse_ph(user)
-        if ph is not None:
-            state.known_facts["pH"] = ph
+def route_after_router(state: AquaponicsState):
+    return "complex_node" if state.get("mode") == "complex" else "simple_node"
 
-    if "fish_species" not in state.known_facts:
-        species = _parse_fish_species(user)
-        if species:
-            state.known_facts["fish_species"] = species
+workflow = StateGraph(AquaponicsState)
+workflow.add_node("router_node", router_node)
+workflow.add_node("simple_node", simple_node)
+workflow.add_node("complex_node", complex_node)
 
+workflow.set_conditional_entry_point(route_entry, {"router_node": "router_node", "complex_node": "complex_node"})
+workflow.add_conditional_edges("router_node", route_after_router, {"simple_node": "simple_node", "complex_node": "complex_node"})
+workflow.add_edge("simple_node", END)
+workflow.add_edge("complex_node", END)
 
-last_bot = ""
+app = workflow.compile()
 
-
-def handle_turn(user: str):
-    global last_bot
-
-    # Best-effort: turn short follow-up replies into structured facts.
-    # This fixes the issue where the model returns known_facts_update = {}.
-    if state.mode == "DIAGNOSIS" and (state.pending_questions or state.asked_questions):
-        update_known_facts_from_followup(user)
-
-    intent = classify_intent(last_bot, user)
-
-    # override followup
-    if state.mode == "DIAGNOSIS" and state.asked_questions:
-        intent = "FOLLOWUP"
-
-    if intent == "NEW_TOPIC":
-        print("[RESET]")
-        state.reset()
-
-    if state.mode == "REFINEMENT":
-        ans = refine_answer(user)
-        state.last_answer = ans
-        print(ans)
-        return
-
-    # =========================================================================
-    # FAQ ROUTER INTEGRATION
-    # =========================================================================
-    router_intent = llm.invoke(router_prompt.format_messages(u=user)).strip().upper()
-
-    # Force Diagnosis mode for specific keywords
-    if any(kw in user.lower() for kw in ["design", "build", "setup", "recommend", "size", "create"]):
-        router_intent = "DIAGNOSIS"
-
-    if "FAQ" in router_intent:
-        context = retrieve_context(VECTORSTORE, user)
-        ans = llm.invoke(faq_prompt.format_messages(c=context, u=user))
-        print(f"\n[AI Knowledge] {ans}\n")
-        state.last_answer = ans
-        return
-    # =========================================================================
-
-    data = decision_model(user)
-
-    # safety stop: no missing info -> force refine
-    if data.get("need_more_info") and not data.get("missing_info"):
-        data["need_more_info"] = False
-        data["action"] = "REFINE"
-        data["stop_reason"] = "No missing info left"
-
-    # ask
-    if data.get("need_more_info") and data.get("action") == "DIAGNOSE":
-        # dynamic budget
-        budget = 5 if len(state.known_facts) < 2 else 2
-
-        qs = []
-        data["next_questions"] = dedupe(data.get("next_questions", []))
-        for q in data["next_questions"]:
-            if q not in state.asked_questions:
-                qs.append(q)
-
-        # Track what we just asked so the next user reply can be parsed deterministically.
-        state.pending_questions = qs[:budget]
-        for q in state.pending_questions:
-            state.asked_questions.append(q)
-            print("Q:", q)
-        return
-
-    # answer
-    ans = complex_reason(user)
-    state.mode = "REFINEMENT"
-    state.last_answer = ans
-    print(ans)
-
-
-def build_rag_index_from_urls() -> Optional[FAISS]:
-    """Build FAISS index from urls.txt. Returns None if build fails."""
-    urls = load_urls_from_file(URL_FILE)
-    if not urls:
-        logging.warning("No URLs found in %s. Running without RAG.", URL_FILE)
-        return None
-
-    documents = []
-    with ThreadPoolExecutor() as pool:
-        future_to_url = {pool.submit(load_web_page, url): url for url in urls}
-        for future in as_completed(future_to_url):
-            documents.extend(future.result())
-
-    if not documents:
-        logging.warning("No documents loaded from URLs. Running without RAG.")
-        return None
-
-    try:
-        return build_vector_store(documents)
-    except Exception as err:  # noqa: BLE001
-        logging.warning("Failed to build FAISS index – %s", err)
-        return None
-
-
-def chat():
-    global last_bot
-    print("Aquaponics AI v6 + RAG (exit to quit)")
-    while True:
-        u = input("You> ")
-        if u == "exit":
-            break
-        handle_turn(u)
-        last_bot = state.last_answer
-
-
+# ==========================================
+# 4. CLI Interactive Loop
+# ==========================================
 if __name__ == "__main__":
-    # Cache HTTP fetches
-    requests_cache.install_cache(CACHE_NAME, expire_after=CACHE_EXPIRE)
-
-    # Build FAISS once at startup
-    VECTORSTORE = build_rag_index_from_urls()
-    if VECTORSTORE is None:
-        logging.info("RAG disabled (no vectorstore).")
-    else:
-        logging.info("RAG enabled.")
-
-    chat()
+    print("\nLangGraph Aquaponics Expert System initialized. Type 'exit' to quit.")
+    print("-" * 40)
+    
+# 初始化加入 original_problem
+    current_state = {"messages": [], "user_query": "", "original_problem": "", "mode": "simple", "follow_up_count": 0}
+    
+    while True:
+        if current_state["follow_up_count"] > 0:
+            user_input = input("\n[Follow-up needed] Please provide more details: ")
+        else:
+            user_input = input("\nPlease enter your question: ")
+            # 只有在新問題(追問次數為0)時，才將輸入記錄為原始症狀
+            current_state["original_problem"] = user_input
+            
+        if user_input.lower() in ['exit', 'quit']:
+                    print("System shutting down.")
+                    break
+                    
+                # 【新增此區塊】重置記憶體狀態
+        if user_input.lower() in ['reset', 'clear']:
+            current_state = {"messages": [], "user_query": "", "original_problem": "", "mode": "simple", "follow_up_count": 0}
+            print("[System] Memory cleared. Starting a new session.")
+            continue
+                    
+        if not user_input.strip():
+            continue
+            
+        print("Expert is thinking...\n")
+        # 找到這行：
+        current_state["user_query"] = user_input
+        
+        # 【新增這行】將使用者的輸入正式寫入狀態記憶體
+        current_state["messages"].append(HumanMessage(content=user_input))
+        
+        try:
+            current_state = app.invoke(current_state)
+            last_message = current_state["messages"][-1]
+            print(f"Expert Answer:\n{last_message.content}")
+        except Exception as e:
+            print(f"Error occurred: {e}")
