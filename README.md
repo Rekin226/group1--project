@@ -8,7 +8,7 @@ The **Aquaponics Chatbot** is an intelligent, AI-powered conversational assistan
   - Built with Streamlit for an intuitive, browser-based experience
   - Real-time chat interface with message history
   - Responsive design with custom styling and chat bubbles
-  - Sidebar controls for easy mode switching and settings
+  - Sidebar controls for quick reset and RAG status
 
 - **Intelligent Web Content Processing**: 
   - Automatically loads and parses web pages using `WebBaseLoader`
@@ -26,22 +26,20 @@ The **Aquaponics Chatbot** is an intelligent, AI-powered conversational assistan
   - Finds the most relevant information based on query meaning, not just keywords
 
 - **Dual-Mode Interaction**:
-  - **Simple Mode**: Provides quick, direct answers to straightforward questions—ideal for fast lookups and general inquiries
-  - **Advanced Mode**: Engages in a guided conversation to understand your specific goals, then delivers comprehensive, tailored responses
+  - **FAQ Mode**: Provides quick, direct answers to straightforward questions—ideal for fast lookups and general inquiries
+  - **Diagnosis/Design Mode**: Engages in a guided conversation to understand your system or goals, then delivers tailored responses
 
 - **Contextual Memory Management**: 
-  - Maintains conversation history using `ConversationBufferMemory`
   - Remembers previous questions and answers for more natural, flowing conversations
   - Allows you to clear context when starting a new topic
 
 - **Source Transparency**:
-  - Optional display of source documents used to generate each response
-  - View document previews and sources for verification
+  - Context-aware responses based on the URLs listed in `urls.txt`
 
 - **Extensible Architecture**: 
   - Modular design makes it easy to add new data sources
   - Configurable to work with different LLM backends via Ollama
-  - Alternative agent-based CLI version available for advanced users
+  - CLI version available for advanced users
 
 ## Installation
 
@@ -83,7 +81,7 @@ The **Aquaponics Chatbot** is an intelligent, AI-powered conversational assistan
 
 2. **Launch the Streamlit frontend server**:
    ```bash
-  streamlit run app.py
+   streamlit run app.py
    ```
    
    The web interface will automatically open in your browser (typically at `http://localhost:8501`)
@@ -97,7 +95,7 @@ The **Aquaponics Chatbot** is an intelligent, AI-powered conversational assistan
 The Streamlit-based chatbot provides an intuitive web interface with:
 
 - **Chat Interface**: Type questions in the chat input box at the bottom
-- **Minimal Controls**: Sidebar includes only RAG toggle and reset conversation
+- **Minimal Controls**: Sidebar includes RAG status and a reset button
 - **Cleaner Layout**: Centered page layout focused on chat readability
 - **Quick Start Prompt**: Helpful starter guidance shown before the first message
 - **Simple Message Flow**: User and assistant messages are clearly separated with avatars

@@ -1,142 +1,171 @@
-"""Streamlit UI for the aquaponics diagnostic chatbot."""
-
 from __future__ import annotations
 
-from typing import List
+import sys
+from pathlib import Path
 
-import requests_cache
 import streamlit as st
 
-import srcs.chatbot as core
+
+ROOT = Path(__file__).resolve().parent
+SRC_DIR = ROOT / "srcs"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+import chatbot  # noqa: E402
 
 
-APP_TITLE = "Aquaponics Assistant"
+st.set_page_config(
+    page_title="Aquaponics Assistant",
+    page_icon="A",
+    layout="wide",
+)
 
 
-def _init_cache() -> None:
-    # Cache HTTP fetches for RAG content.
-    requests_cache.install_cache(core.CACHE_NAME, expire_after=core.CACHE_EXPIRE)
+st.markdown(
+    """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+:root {
+  --bg-1: #f6f1ea;
+  --bg-2: #e7efe9;
+  --ink: #1d1c1a;
+  --muted: #5a5a56;
+  --accent: #2b6f5a;
+  --accent-2: #8db19a;
+  --bubble-user: #ffffff;
+  --bubble-ai: #f0f6f3;
+  --border: rgba(0,0,0,0.08);
+}
+
+html, body, [class*="stApp"] {
+  font-family: "Space Grotesk", sans-serif;
+  color: var(--ink);
+}
+
+.stApp {
+  background: radial-gradient(1200px 800px at 10% 0%, #ffffff 0%, var(--bg-1) 35%, var(--bg-2) 100%);
+}
+
+section[data-testid="stSidebar"] {
+  background: linear-gradient(180deg, #ffffff 0%, #f2f6f1 100%);
+  border-right: 1px solid var(--border);
+}
+
+.app-title {
+  font-weight: 700;
+  font-size: 1.4rem;
+  letter-spacing: 0.02em;
+  margin-bottom: 0.2rem;
+}
+
+.app-subtitle {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin-bottom: 1rem;
+}
+
+.chip {
+  display: inline-block;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.hint {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+[data-testid="stChatMessage"] {
+  border-radius: 14px;
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--border);
+  background: var(--bubble-ai);
+}
+
+[data-testid="stChatMessage"][data-role="user"] {
+  background: var(--bubble-user);
+  border: 1px solid var(--border);
+}
+
+code, pre {
+  font-family: "IBM Plex Mono", monospace;
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
 
 
-@st.cache_resource(show_spinner=False)
-def _build_vectorstore() -> object | None:
-    _init_cache()
-    return core.build_rag_index_from_urls()
+@st.cache_resource(show_spinner="Loading knowledge base...")
+def _load_vectorstore():
+    chatbot.requests_cache.install_cache(chatbot.CACHE_NAME, expire_after=chatbot.CACHE_EXPIRE)
+    return chatbot.build_rag_index_from_urls()
 
 
-def _reset_session_state() -> None:
-    st.session_state.messages = []
-    st.session_state.last_bot = ""
-    core.state.reset()
-    core.last_bot = ""
+def _ensure_backend():
+    if "vectorstore" not in st.session_state:
+        st.session_state.vectorstore = _load_vectorstore()
+    chatbot.VECTORSTORE = st.session_state.vectorstore
 
 
-def _ensure_session_state() -> None:
+def _init_chat_state():
     if "messages" not in st.session_state:
-        st.session_state.messages = []
-    if "last_bot" not in st.session_state:
-        st.session_state.last_bot = ""
+        st.session_state.messages = [
+            {
+                "role": "assistant",
+                "content": "Tell me about your system or what you want to build, and I will guide you.",
+            }
+        ]
+        chatbot.reset_state()
 
 
-def _set_rag(use_rag: bool) -> None:
-    if use_rag:
-        with st.spinner("Building knowledge index..."):
-            core.VECTORSTORE = _build_vectorstore()
+_ensure_backend()
+_init_chat_state()
+
+
+with st.sidebar:
+    st.markdown('<div class="app-title">Aquaponics Assistant</div>', unsafe_allow_html=True)
+    st.markdown('<div class="app-subtitle">Diagnosis and design support</div>', unsafe_allow_html=True)
+
+    if st.session_state.vectorstore is None:
+        st.markdown('<div class="chip">RAG: disabled</div>', unsafe_allow_html=True)
     else:
-        core.VECTORSTORE = None
+        st.markdown('<div class="chip">RAG: enabled</div>', unsafe_allow_html=True)
 
+    st.markdown(
+        '<div class="hint">Ask about system design, water quality, fish behavior, or plant issues.</div>',
+        unsafe_allow_html=True,
+    )
 
-def _rerun() -> None:
-    if hasattr(st, "rerun"):
+    if st.button("New chat", use_container_width=True):
+        st.session_state.messages = [
+            {
+                "role": "assistant",
+                "content": "Tell me about your system or what you want to build, and I will guide you.",
+            }
+        ]
+        chatbot.reset_state()
         st.rerun()
-    else:
-        st.experimental_rerun()
 
 
-def _render_header() -> None:
-    st.title(APP_TITLE)
-    st.write("Describe your system issue and get step-by-step help.")
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
 
-def _render_sidebar() -> None:
-    st.sidebar.header("Controls")
+prompt = st.chat_input("Describe your system or ask a question...")
+if prompt:
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
 
-    use_rag = st.sidebar.checkbox(
-        "Use web knowledge (RAG)",
-        value=True,
-        help="Disable to use general aquaponics knowledge only.",
-    )
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+            response = chatbot.handle_turn(prompt)
+            st.markdown(response)
 
-    if st.sidebar.button("Reset conversation", use_container_width=True):
-        _reset_session_state()
-        _rerun()
-
-    _set_rag(use_rag)
-    if use_rag:
-        if core.VECTORSTORE is None:
-            st.sidebar.caption("RAG unavailable; using general knowledge.")
-        else:
-            st.sidebar.caption("RAG ready.")
-
-
-def _format_questions(questions: List[str]) -> str:
-    if not questions:
-        return ""
-    lines = ["I need a bit more info:"]
-    lines.extend([f"- {q}" for q in questions])
-    return "\n".join(lines)
-
-
-def _add_message(role: str, content: str) -> None:
-    st.session_state.messages.append({"role": role, "content": content})
-
-
-def _render_messages() -> None:
-    for msg in st.session_state.messages:
-        avatar = "🧑" if msg["role"] == "user" else "🤖"
-        with st.chat_message(msg["role"], avatar=avatar):
-            st.markdown(msg["content"])
-
-
-def _handle_user_input(user_text: str) -> None:
-    _add_message("user", user_text)
-
-    prev_pending = list(core.state.pending_questions)
-    prev_answer = core.state.last_answer
-
-    core.handle_turn(user_text)
-    core.last_bot = core.state.last_answer
-
-    # If the model asked follow-up questions, surface them as assistant message.
-    if core.state.pending_questions and core.state.pending_questions != prev_pending:
-        assistant_text = _format_questions(core.state.pending_questions)
-    else:
-        assistant_text = core.state.last_answer or prev_answer or "I'm here to help."
-
-    _add_message("assistant", assistant_text)
-
-
-def main() -> None:
-    st.set_page_config(
-        page_title=APP_TITLE,
-        page_icon="💧",
-        layout="centered",
-        initial_sidebar_state="collapsed",
-    )
-    _ensure_session_state()
-    _render_header()
-    _render_sidebar()
-
-    _render_messages()
-
-    if not st.session_state.messages:
-        st.info("Start with your fish behavior, water temperature, and pH.")
-
-    prompt = st.chat_input("Describe your system issue or question...")
-    if prompt:
-        _handle_user_input(prompt)
-        _rerun()
-
-
-if __name__ == "__main__":
-    main()
+    st.session_state.messages.append({"role": "assistant", "content": response})
