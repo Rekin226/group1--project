@@ -49,10 +49,10 @@ vectorstore = setup_vectorstore()
 # retriever = vectorstore.as_retriever(search_type="mmr", search_kwargs={"k": 5, "fetch_k": 15})
 
 # 替換為標準的相似度檢索：
-retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 8})
+retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 12})
 
 # Initialize LLM model
-llm = ChatOllama(model="llama3", temperature=0)
+llm = ChatOllama(model="qwen2.5:7b", temperature=0)
 
 # ==========================================
 # 2. Define Graph State and Nodes (LangGraph Node)
@@ -67,31 +67,30 @@ class AquaponicsState(TypedDict):
 
 # 4. 定義路由分類節點 (Router Node)
 def router_node(state: AquaponicsState):
-    # 改寫為高精度的三元分類提示詞
     system_prompt = """You are an Aquaponics query classifier.
-Your ONLY task is to classify the user's input into one of three categories: 'simple', 'diagnostic', or 'design'.
+Your ONLY task is to classify the user's input into: 'simple', 'diagnostic', 'design', or 'cost'.
 Output EXACTLY one word. Do NOT output any other text.
 
 CLASSIFICATION RULES:
-- Output 'simple' IF the user is asking a general factual question (e.g., "What is the ideal pH?").
-- Output 'diagnostic' IF the user is reporting a system problem or asking for troubleshooting (e.g., "My fish are dying", "Roots are mushy").
-- Output 'design' IF the user is asking about system architecture, building, dimensions, component selection, or cost estimation (e.g., "I want to build a DWC system", "How much does it cost?").
+- 'diagnostic': Reporting a problem, physical symptoms, or troubleshooting (e.g., "Fish gasping", "yellow leaves").
+- 'design': Asking about system architecture, planning a build, dimensions, or material requirements (e.g., "I want to build a system", "Which system is best for tomatoes?").
+- 'cost': Asking about price, budget, financial estimates, or component costs (e.g., "How much does it cost?", "What is the price of grow media?").
+- 'simple': Factual questions, definitions, or theory without reporting an active problem (e.g., "What is the ideal pH?").
 """
     
     messages_to_llm = [SystemMessage(content=system_prompt)] + state.get("messages", [])
     response = llm.invoke(messages_to_llm)
     decision = response.content.strip().lower()
     
-    # 根據分類結果決定 mode (決定是否需要追問) 與 task_type (決定套用哪種專家 Prompt)
+    # 根據分類結果決定 mode 與 task_type
     if "diagnostic" in decision:
-        mode = "complex"
-        task_type = "diagnostic"
+        mode, task_type = "complex", "diagnostic"
     elif "design" in decision:
-        mode = "complex"
-        task_type = "design"
+        mode, task_type = "complex", "design"
+    elif "cost" in decision:
+        mode, task_type = "complex", "cost"
     else:
-        mode = "simple"
-        task_type = "simple"
+        mode, task_type = "simple", "simple"
         
     print(f"\n[Internal] Router decided mode: {mode} | task_type: {task_type}")
     
@@ -109,13 +108,13 @@ def simple_node(state: AquaponicsState):
     context = "\n\n---\n\n".join(context_parts)
     
     system_prompt = f"""You are a strict and rigorous Aquaponics expert.
-TASK: Answer the user's factual question based ONLY on the provided Context.
+TASK: Answer the user's factual question based STRICTLY AND ONLY on the provided Context.
 
 CRITICAL RULES:
-1. DIRECT ANSWER (NO FLUFF): Do NOT start with phrases like "Based on the context" or "According to the text". Provide the facts directly.
-2. ZERO HALLUCINATION: If the entire answer is missing, output EXACTLY: "Based on the current knowledge base, I cannot provide an exact answer."
+1. ZERO HALLUCINATION (CRITICAL): You are explicitly FORBIDDEN from using any external knowledge. If the exact specific entity (e.g., a specific fish species like 'Koi', a specific plant, or a specific metric) asked by the user is NOT explicitly mentioned in the Context, you MUST reject the question. Output EXACTLY: "Based on the current knowledge base, I cannot provide an exact answer." Do NOT guess, approximate, or substitute.
+2. DIRECT ANSWER: If the exact answer exists in the Context, provide the facts directly. Do NOT start with phrases like "According to the text".
 3. PARTIAL KNOWLEDGE: If you can only answer part of a multi-part question, answer the part you know. For the missing part, explicitly append: "Note: The current knowledge base does not contain information regarding [missing topic]."
-4. TRACEABILITY: You MUST conclude your response with a "**SOURCES**:" section, listing the EXACT SECTION headers from the Context used to formulate your answer.
+4. TRACEABILITY: You MUST conclude your response with a "**SOURCES**:" section, listing the EXACT SECTION headers from the Context.
 
 Context:
 {context}
@@ -123,11 +122,10 @@ Context:
 You MUST structure your response EXACTLY as follows (unless completely missing):
 
 **ANSWER**: 
-[Direct, professional answer. Use bullet points for steps or multiple facts.]
+[Direct, professional answer using bullet points.]
 
 **SOURCES**: 
-- [Exact SECTION header 1]
-- [Exact SECTION header 2]
+- [Exact SECTION header]
 """
     
     messages_to_llm = [SystemMessage(content=system_prompt)] + state.get("messages", [])
@@ -161,17 +159,18 @@ def complex_node(state: AquaponicsState):
 
     if task_type == "diagnostic":
         system_prompt = f"""You are a strict Aquaponics troubleshooting diagnostic AI.
-TASK: Assess the user's symptoms against the Context using strict ELIMINATION.
+TASK: Assess the user's symptoms against the Context using strict diagnostic logic.
 
-CRITICAL RULES:
-1. MATCHING: Identify all conditions/diseases in the Context that share ANY of the user's stated symptoms.
-2. STRICT ELIMINATION: You MUST actively evaluate EVERY single condition found in the Context against the user's input.
-   - Rule A (Contradiction): If a condition's environment, root cause, or specific symptoms clearly contradict the user's input, ELIMINATE IT.
-   - Rule B (Missing Specifics): If the user provides a highly specific symptom and the condition does NOT mention it, ELIMINATE IT.
-3. COUNT: Count the REMAINING conditions.
-4. STATUS DECISION:
-   - If the Remaining Count is > 1 or 0, output **STATUS**: ASK.
-   - ONLY if the Remaining Count is EXACTLY 1, output **STATUS**: SOLVE.
+CRITICAL RULES FOR ELIMINATION (MUST FOLLOW STRICTLY):
+1. CANDIDATE MATCHING (EXHAUSTIVE SEARCH): You MUST meticulously scan EVERY SINGLE section in the Context. Identify and list ALL conditions that share ANY of the user's stated symptom(s). Missing a matching condition is a fatal error. Do not stop early.
+2. THE "UNSTATED" RULE (KEEP): Do NOT eliminate a condition just because the user failed to mention every symptom listed in the Context. 
+3. EXPLICIT CONTRADICTION (ELIMINATE): You MUST eliminate a condition IF AND ONLY IF the user's stated symptom logically or physically contradicts the condition's description in the Context (e.g., mutually exclusive physical states, opposite behaviors, or conflicting environmental triggers).
+4. ZERO HALLUCINATION: Do NOT attribute symptoms to a condition if they are not explicitly written in the Context.
+5. COUNT: Count the remaining Candidate conditions.
+6. STATUS DECISION:
+   - If Count > 1: output **STATUS**: ASK.
+   - If Count == 0: output **STATUS**: UNKNOWN.
+   - ONLY if Count == 1: output **STATUS**: SOLVE.
 
 Context:
 {context}
@@ -182,111 +181,131 @@ Current User Input: {query}
 You MUST structure your response EXACTLY as follows:
 
 **ANALYSIS**:
-- Confirmed Symptoms: [List the user's exact stated symptoms]
+- Confirmed Symptoms: [List user's exact symptoms]
+- Candidate Conditions: 
+  * [Condition name]: Kept because [Reason].
 - Eliminated Conditions: 
-  * [Condition from Context]: Eliminated because [reason based on strict mismatch]
-- Remaining Conditions: [List the exact names of the surviving conditions]
-- Remaining Count: [Number]
+  * [Condition name]: Eliminated ONLY because [State the exact logical contradiction based on Context].
+- Candidate Count: [Number]
 
-**STATUS**: [ASK or SOLVE]
+**STATUS**: [ASK / SOLVE / UNKNOWN]
 
 [If STATUS is ASK, output:]
 **QUESTIONS**:
-- [Ask 1-2 specific questions to differentiate the remaining conditions]
+[Ask 1-3 highly specific diagnostic questions to differentiate the remaining Candidates based on their unique traits in the Context.]
 
 [If STATUS is SOLVE, output:]
 **DIAGNOSIS**: [Exact name]
 **ROOT CAUSE**: [Extract from context]
 **SOLUTION**: [Extract from context]
+
+[If STATUS is UNKNOWN, output:]
+**RESPONSE**: Based on the knowledge base, I cannot match these exact symptoms to a single condition.
 """
         messages_to_llm = [SystemMessage(content=system_prompt)] + state.get("messages", [])
         response = llm.invoke(messages_to_llm)
         
-        if "**STATUS**: SOLVE" in response.content:
+        if "**STATUS**: SOLVE" in response.content or "**STATUS**: UNKNOWN" in response.content:
             return {"messages": state.get("messages", []) + [AIMessage(content=response.content)], "follow_up_count": 0, "mode": "simple"}
         else:
             return {"messages": state.get("messages", []) + [AIMessage(content=response.content)], "follow_up_count": count + 1}
             
     # ==========================================
-    # 3. 泛用型「設計」任務 Prompt 與簡化護欄
+    # 3. 專精型「設計」任務 Prompt (通用物理維度比對，無硬編碼)
     # ==========================================
     elif task_type == "design":
         system_prompt = f"""You are an expert Aquaponics System Architect AI.
-TASK: Recommend the optimal system architecture and provide EITHER a design guide OR a cost estimate based on the user's intent and Context.
+TASK: Recommend the optimal system architecture based on user constraints and the Context.
 
-CRITICAL RULES:
-1. SHORT-CIRCUIT BLOCK (CRITICAL): If the user provides ZERO specific constraints (e.g., no crop type, no space limits), you MUST extract 'None'. 
-   -> If Extracted Constraints is 'None', ALL architectures MUST be marked as 'Pending' and you MUST output **STATUS**: ASK. Do NOT guess or assume any Fit.
-2. STRICT EVALUATION & PHYSICAL RULES:
-   - You MUST evaluate constraints against the Context. Narrow down to EXACTLY ONE architecture (DWC, NFT, or Media-Based).
-   - ROOFTOP/WEIGHT RULE: If the user mentions "rooftop", "balcony", "space-constrained", or "weight limit", you MUST eliminate DWC and Media-Based. You MUST choose NFT.
-   - FRUIT RULE: If the user mentions "fruiting plants" or "tomatoes", you MUST eliminate NFT.
-3. INTENT DETECTION: Determine if the user is asking "How to build/design" (Intent: BUILD) OR "How much it costs" (Intent: COST).
-4. ZERO HALLUCINATION (CRITICAL): 
-   - For SOLVE_COST: Extract EXACT prices from 'Economic Variables'.
-   - For SOLVE_DESIGN: You MUST extract the 'Required Materials List' and 'Step-by-Step Assembly Process' belonging ONLY to the chosen architecture. NEVER mix DWC materials into a Media-Based design.
-5. STATUS DECISION:
-   - If constraints are 'None' or insufficient: output **STATUS**: ASK.
-   - If requirements are physically incompatible: output **STATUS**: CONFLICT.
-   - If EXACTLY ONE architecture fits AND user wants to build/design: output **STATUS**: SOLVE_DESIGN.
-   - If EXACTLY ONE architecture fits AND user wants a cost estimate: output **STATUS**: SOLVE_COST.
+STEP 1: STRUCTURED EXTRACTION
+Extract specific constraints. If not mentioned, write 'None'.
+- Location: (e.g., warehouse, balcony, outdoors)
+- Limits: (e.g., weight limitations, space constraints)
+- Crops: (e.g., tomatoes, leafy greens)
+
+STEP 2: UNIVERSAL ARCHITECTURE EVALUATION
+Evaluate DWC, NFT, and Media-Based strictly against the Context. Check for physical incompatibilities:
+1. Load Check: Compare the user's Location/Limits against the architecture's weight properties in the Context. If the Context states the architecture requires "structural reinforcement", has "substantial static load", "extreme static loads", or is "restricted to ground-level", it MUST be marked 'No Fit' for elevated or weight-limited locations.
+2. Biology Check: Compare the user's Crops against the architecture's plant support properties in the Context. If the Context states the architecture lacks "structural support" or has "clogging risks", it MUST be marked 'No Fit' for heavy/fruiting crops.
+Mark 'No Fit' if it fails ANY check, and quote the exact reason from the Context. Otherwise, mark 'Fit'. 
+Count the remaining 'Fit' architectures.
+
+STEP 3: STATUS ROUTING
+- If Fit Count > 1: **STATUS**: ASK (You MUST ask questions to narrow it down to exactly 1).
+- If Fit Count == 0: **STATUS**: CONFLICT
+- If Fit Count == 1: **STATUS**: SOLVE_DESIGN
+
+STEP 4: ZERO HALLUCINATION OUTPUT
+Format your response exactly based on STATUS. Do not mix formats. If materials/steps are missing in Context, write "Data missing in knowledge base."
 
 Context:
 {context}
 
-Original Request: {original_problem}
 Current User Input: {query}
 
-You MUST structure your response EXACTLY as follows:
+Output EXACTLY in this format:
 
 **ANALYSIS**:
-- Extracted Constraints: [List extracted requirements. Write 'None' if none]
-- User Intent: [BUILD or COST]
-- Architecture Evaluation:
-  * DWC: [Fit / No Fit / Pending] because [reason]
-  * NFT: [Fit / No Fit / Pending] because [reason]
-  * Media-Based: [Fit / No Fit / Pending] because [reason]
-  (Note: If constraints are 'None', all MUST be 'Pending')
+- Location: [Extracted]
+- Limits: [Extracted]
+- Crops: [Extracted]
+- Evaluation:
+  * DWC: [Fit / No Fit] because [Context quote]
+  * NFT: [Fit / No Fit] because [Context quote]
+  * Media-Based: [Fit / No Fit] because [Context quote]
+- Fit Count: [Number]
 
-**STATUS**: [ASK / CONFLICT / SOLVE_DESIGN / SOLVE_COST]
+**STATUS**: [ASK / CONFLICT / SOLVE_DESIGN]
 
-[If STATUS is ASK, output:]
-**QUESTIONS**:
-- [Ask 1-3 specific questions to gather missing constraints]
-
-[If STATUS is CONFLICT, output:]
-**EXPLANATION**: [Explain why constraints contradict based on physical rules]
-**SUGGESTION**: [Suggest a compromise]
-
-[If STATUS is SOLVE_DESIGN, output:]
-**RECOMMENDED ARCHITECTURE**: [Exact name]
-**WHY IT FITS YOU**: [Explain why based on characteristics]
-**REQUIRED MATERIALS**:
-[CRITICAL: Extract the bulleted list EXACTLY from the 'Required Materials List' section belonging ONLY to the chosen architecture in the Context. Do NOT paraphrase.]
-**CONSTRUCTION STEPS**:
-[CRITICAL: Extract the numbered steps EXACTLY from the 'Step-by-Step Assembly Process' section belonging ONLY to the chosen architecture in the Context. Do NOT paraphrase.]
-
-[If STATUS is SOLVE_COST, output:]
-**RECOMMENDED ARCHITECTURE**: [Exact name]
-**WHY IT FITS YOU**: [Explain why based on characteristics]
-**COST ESTIMATE TABLE**:
-[Generate a Markdown table listing each component, expected lifespan, and cost range STRICTLY from 'Economic Variables'.]
-**TOTAL ESTIMATE SUMMARY**:
-[Summarize the estimated total capital investment and performance benchmarks based ONLY on the Context.]
+**FINAL OUTPUT**:
+[CRITICAL: Choose ONLY ONE format below based on the STATUS. DO NOT output the other formats.]
+- If ASK: Write "QUESTIONS:" followed by specific questions to gather missing constraints.
+- If CONFLICT: Write "EXPLANATION: [reason]" and "SUGGESTION: [alternative]".
+- If SOLVE_DESIGN: Write "RECOMMENDED ARCHITECTURE:", "WHY IT FITS:", "REQUIRED MATERIALS:", and "CONSTRUCTION STEPS:" strictly from Context.
 """
         messages_to_llm = [SystemMessage(content=system_prompt)] + state.get("messages", [])
         response = llm.invoke(messages_to_llm)
         content = response.content
         
-        # 狀態機攔截邏輯
-        if "**STATUS**: CONFLICT" in content:
-            print("\n[System] 偵測到設計條件衝突，返回結果並重置追問狀態。")
-            return {"messages": state.get("messages", []) + [AIMessage(content=content)], "follow_up_count": 0, "mode": "simple"}
-        elif "**STATUS**: SOLVE_DESIGN" in content or "**STATUS**: SOLVE_COST" in content:
+        if "**STATUS**: CONFLICT" in content or "**STATUS**: SOLVE_DESIGN" in content:
             return {"messages": state.get("messages", []) + [AIMessage(content=content)], "follow_up_count": 0, "mode": "simple"}
         else:
             return {"messages": state.get("messages", []) + [AIMessage(content=content)], "follow_up_count": count + 1}
+
+    # ==========================================
+    # 4. 專精型「成本估算」任務 Prompt (完全獨立，防止格式污染)
+    # ==========================================
+    elif task_type == "cost":
+        system_prompt = f"""You are an expert Aquaponics Financial Estimator AI.
+TASK: Provide cost estimates based ONLY on the 'Economic Variables' sections in the Context.
+
+CRITICAL RULES:
+1. Identify the specific components the user is asking about.
+2. Retrieve exact prices and expected lifespans STRICTLY from the Context.
+3. ZERO HALLUCINATION: Do NOT output construction steps, materials lists, or design guides. Focus ONLY on financial data.
+4. If cost data is not in the Context, explicitly state: "Cost data not available in the knowledge base."
+
+Context:
+{context}
+
+Current User Input: {query}
+
+Output EXACTLY in this format:
+
+**ANALYSIS**:
+- Requested Items: [List components]
+
+**STATUS**: SOLVE_COST
+
+**FINAL OUTPUT**:
+COST ESTIMATE TABLE:
+[Generate a Markdown table listing each component, price range, and expected lifespan based ONLY on Context]
+"""
+        messages_to_llm = [SystemMessage(content=system_prompt)] + state.get("messages", [])
+        response = llm.invoke(messages_to_llm)
+        content = response.content
         
+        return {"messages": state.get("messages", []) + [AIMessage(content=content)], "follow_up_count": 0, "mode": "simple"}
 # ==========================================
 # 3. Build and Compile State Machine (StateGraph Execution)
 # ==========================================
