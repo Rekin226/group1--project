@@ -276,30 +276,58 @@ Output EXACTLY in this format:
     # 4. 專精型「成本估算」任務 Prompt (完全獨立，防止格式污染)
     # ==========================================
     elif task_type == "cost":
-        system_prompt = f"""You are an expert Aquaponics Financial Estimator AI.
-TASK: Provide cost estimates based ONLY on the 'Economic Variables' sections in the Context.
+        system_prompt = f"""You are an expert Aquaponics System Architect AI.
+TASK: Recommend the optimal system architecture and provide a cost estimate based on the user's intent and Context.
 
 CRITICAL RULES:
-1. Identify the specific components the user is asking about.
-2. Retrieve exact prices and expected lifespans STRICTLY from the Context.
-3. ZERO HALLUCINATION: Do NOT output construction steps, materials lists, or design guides. Focus ONLY on financial data.
-4. If cost data is not in the Context, explicitly state: "Cost data not available in the knowledge base."
+1. SHORT-CIRCUIT BLOCK (CRITICAL): If the user provides ZERO specific constraints (e.g., no crop type, no space limits), you MUST extract 'None'. 
+   -> If Extracted Constraints is 'None', ALL architectures MUST be marked as 'Pending' and you MUST output **STATUS**: ASK. Do NOT guess or assume any Fit.
+2. STRICT EVALUATION & PHYSICAL RULES:
+   - You MUST evaluate constraints against the Context. Narrow down to EXACTLY ONE architecture (DWC, NFT, or Media-Based).
+   - ROOFTOP/WEIGHT RULE: If the user mentions "rooftop", "balcony", "space-constrained", or "weight limit", you MUST eliminate DWC and Media-Based. You MUST choose NFT.
+   - FRUIT RULE: If the user mentions "fruiting plants" or "tomatoes", you MUST eliminate NFT.
+3. INTENT DETECTION: Determine if the user is asking "How much it costs" (Intent: COST).
+4. ZERO HALLUCINATION (CRITICAL): 
+   - For SOLVE_COST: Extract EXACT prices from 'Economic Variables'. Do NOT guess prices or use external data.
+5. STATUS DECISION:
+   - If constraints are 'None' or insufficient: output **STATUS**: ASK.
+   - If requirements are physically incompatible: output **STATUS**: CONFLICT.
+   - If EXACTLY ONE architecture fits AND user wants a cost estimate: output **STATUS**: SOLVE_COST.
 
 Context:
 {context}
 
+Original Request: {original_problem}
 Current User Input: {query}
 
-Output EXACTLY in this format:
+You MUST structure your response EXACTLY as follows:
 
 **ANALYSIS**:
-- Requested Items: [List components]
+- Extracted Constraints: [List extracted requirements. Write 'None' if none]
+- User Intent: COST
+- Architecture Evaluation:
+  * DWC: [Fit / No Fit / Pending] because [reason]
+  * NFT: [Fit / No Fit / Pending] because [reason]
+  * Media-Based: [Fit / No Fit / Pending] because [reason]
+  (Note: If constraints are 'None', all MUST be 'Pending')
 
-**STATUS**: SOLVE_COST
+**STATUS**: [ASK / CONFLICT / SOLVE_COST]
 
-**FINAL OUTPUT**:
-COST ESTIMATE TABLE:
-[Generate a Markdown table listing each component, price range, and expected lifespan based ONLY on Context]
+[If STATUS is ASK, output:]
+**QUESTIONS**:
+- [Ask 1-3 specific questions to gather missing constraints]
+
+[If STATUS is CONFLICT, output:]
+**EXPLANATION**: [Explain why constraints contradict based on physical rules]
+**SUGGESTION**: [Suggest a compromise]
+
+[If STATUS is SOLVE_COST, output:]
+**RECOMMENDED ARCHITECTURE**: [Exact name]
+**WHY IT FITS YOU**: [Explain why based on characteristics]
+**COST ESTIMATE TABLE**:
+[Generate a Markdown table listing each component, expected lifespan, and cost range STRICTLY from 'Economic Variables'.]
+**TOTAL ESTIMATE SUMMARY**:
+[Summarize the estimated total capital investment and performance benchmarks based ONLY on the Context.]
 """
         messages_to_llm = [SystemMessage(content=system_prompt)] + state.get("messages", [])
         response = llm.invoke(messages_to_llm)
