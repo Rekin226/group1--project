@@ -7,7 +7,10 @@ transformers
 sentence-transformers
 langchain
 langchain_community
+langgraph
+chromadb
 faiss-cpu
 openpyxl
 streamlit
 markdown
+

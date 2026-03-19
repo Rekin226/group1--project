@@ -5,167 +5,295 @@ from pathlib import Path
 
 import streamlit as st
 
-
 ROOT = Path(__file__).resolve().parent
 SRC_DIR = ROOT / "srcs"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-import chatbot  # noqa: E402
+import chatbot
+from langchain_core.messages import HumanMessage, AIMessage
 
-
+# ==========================================
+# Page Configuration
+# ==========================================
 st.set_page_config(
-    page_title="Aquaponics Assistant",
-    page_icon="A",
-    layout="wide",
+    page_title="Aquaponics Expert AI",
+    page_icon="🐟",
+    layout="centered",
 )
 
-
-st.markdown(
-    """
+# ==========================================
+# Minimalist Custom CSS
+# ==========================================
+def get_theme_css(theme: str) -> str:
+    """Return CSS based on current theme."""
+    if theme == "dark":
+        return """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
-
-:root {
-  --bg-1: #f6f1ea;
-  --bg-2: #e7efe9;
-  --ink: #1d1c1a;
-  --muted: #5a5a56;
-  --accent: #2b6f5a;
-  --accent-2: #8db19a;
-  --bubble-user: #ffffff;
-  --bubble-ai: #f0f6f3;
-  --border: rgba(0,0,0,0.08);
-}
-
-html, body, [class*="stApp"] {
-  font-family: "Space Grotesk", sans-serif;
-  color: var(--ink);
-}
-
+/* Dark theme colors */
 .stApp {
-  background: radial-gradient(1200px 800px at 10% 0%, #ffffff 0%, var(--bg-1) 35%, var(--bg-2) 100%);
+    background-color: #0e1117;
+    color: #fafafa;
 }
 
-section[data-testid="stSidebar"] {
-  background: linear-gradient(180deg, #ffffff 0%, #f2f6f1 100%);
-  border-right: 1px solid var(--border);
+[data-testid="stSidebar"] {
+    background-color: #161b22;
 }
 
-.app-title {
-  font-weight: 700;
-  font-size: 1.4rem;
-  letter-spacing: 0.02em;
-  margin-bottom: 0.2rem;
+[data-testid="stSidebar"] .stMarkdown,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] .st-bp {
+    color: #b0b0b0 !important;
 }
 
-.app-subtitle {
-  color: var(--muted);
-  font-size: 0.9rem;
-  margin-bottom: 1rem;
+.stChatMessage {
+    background-color: transparent;
+    border-bottom: 1px solid #30363d;
 }
 
-.chip {
-  display: inline-block;
-  padding: 0.2rem 0.6rem;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  font-size: 0.75rem;
-  color: var(--muted);
+.stChatInputContainer {
+    border-top: 1px solid #30363d;
 }
 
-.hint {
-  font-size: 0.85rem;
-  color: var(--muted);
+.stChatInputContainer textarea {
+    background-color: #0d1117;
+    color: #fafafa;
 }
 
-[data-testid="stChatMessage"] {
-  border-radius: 14px;
-  padding: 0.4rem 0.8rem;
-  border: 1px solid var(--border);
-  background: var(--bubble-ai);
+.stMarkdown {
+    color: #fafafa;
 }
 
-[data-testid="stChatMessage"][data-role="user"] {
-  background: var(--bubble-user);
-  border: 1px solid var(--border);
+h1, h2, h3, h4, h5, h6 {
+    color: #fafafa !important;
 }
 
-code, pre {
-  font-family: "IBM Plex Mono", monospace;
+code {
+    background-color: #21262d;
+    color: #79c0ff;
+}
+
+/* Hide footer */
+footer {
+    visibility: hidden;
+}
+
+/* Clean header */
+header {
+    background: transparent;
+}
+
+.block-container {
+    padding-top: 2rem;
+    padding-bottom: 2rem;
 }
 </style>
-""",
-    unsafe_allow_html=True,
-)
-
-
-@st.cache_resource(show_spinner="Loading knowledge base...")
-def _load_vectorstore():
-    chatbot.requests_cache.install_cache(chatbot.CACHE_NAME, expire_after=chatbot.CACHE_EXPIRE)
-    return chatbot.build_rag_index_from_urls()
-
-
-def _ensure_backend():
-    if "vectorstore" not in st.session_state:
-        st.session_state.vectorstore = _load_vectorstore()
-    chatbot.VECTORSTORE = st.session_state.vectorstore
-
-
-def _init_chat_state():
-    if "messages" not in st.session_state:
-        st.session_state.messages = [
-            {
-                "role": "assistant",
-                "content": "Tell me about your system or what you want to build, and I will guide you.",
-            }
-        ]
-        chatbot.reset_state()
-
-
-_ensure_backend()
-_init_chat_state()
-
-
-with st.sidebar:
-    st.markdown('<div class="app-title">Aquaponics Assistant</div>', unsafe_allow_html=True)
-    st.markdown('<div class="app-subtitle">Diagnosis and design support</div>', unsafe_allow_html=True)
-
-    if st.session_state.vectorstore is None:
-        st.markdown('<div class="chip">RAG: disabled</div>', unsafe_allow_html=True)
+"""
     else:
-        st.markdown('<div class="chip">RAG: enabled</div>', unsafe_allow_html=True)
+        return """
+<style>
+/* Light theme colors */
+.stApp {
+    background-color: #ffffff;
+    color: #262730;
+}
 
-    st.markdown(
-        '<div class="hint">Ask about system design, water quality, fish behavior, or plant issues.</div>',
-        unsafe_allow_html=True,
-    )
+[data-testid="stSidebar"] {
+    background-color: #f9f9f9;
+}
 
-    if st.button("New chat", use_container_width=True):
-        st.session_state.messages = [
-            {
-                "role": "assistant",
-                "content": "Tell me about your system or what you want to build, and I will guide you.",
-            }
-        ]
-        chatbot.reset_state()
+[data-testid="stSidebar"] .stMarkdown,
+[data-testid="stSidebar"] label {
+    color: #555555 !important;
+}
+
+.stChatMessage {
+    background-color: transparent;
+    border-bottom: 1px solid #eee;
+}
+
+.stChatInputContainer {
+    border-top: 1px solid #eee;
+}
+
+.stMarkdown {
+    color: #262730;
+}
+
+/* Hide footer */
+footer {
+    visibility: hidden;
+}
+
+/* Clean header */
+header {
+    background: transparent;
+}
+
+.block-container {
+    padding-top: 2rem;
+    padding-bottom: 2rem;
+}
+</style>
+"""
+
+# ==========================================
+# Session State Initialization
+# ==========================================
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "original_problem" not in st.session_state:
+    st.session_state.original_problem = ""
+if "mode" not in st.session_state:
+    st.session_state.mode = "simple"
+if "follow_up_count" not in st.session_state:
+    st.session_state.follow_up_count = 0
+if "task_type" not in st.session_state:
+    st.session_state.task_type = "simple"
+if "theme" not in st.session_state:
+    st.session_state.theme = "light"
+
+# Apply theme CSS
+st.markdown(get_theme_css(st.session_state.theme), unsafe_allow_html=True)
+
+
+# ==========================================
+# Helper Functions
+# ==========================================
+def get_task_type_label(task_type: str) -> str:
+    """Return display label for task type."""
+    labels = {
+        "diagnostic": "🔍 Diagnostic",
+        "design": "🏗️ Design",
+        "cost": "💰 Cost Estimate",
+        "simple": "Q&A",
+    }
+    return labels.get(task_type, "Unknown")
+
+
+def clear_chat():
+    """Reset chat session state."""
+    st.session_state.messages = []
+    st.session_state.original_problem = ""
+    st.session_state.mode = "simple"
+    st.session_state.follow_up_count = 0
+    st.session_state.task_type = "simple"
+
+
+def invoke_chatbot(user_input: str) -> str:
+    """Invoke the chatbot workflow and return response."""
+    current_state = {
+        "messages": [
+            HumanMessage(content=msg["content"])
+            for msg in st.session_state.messages
+            if msg["role"] in ["user", "assistant"]
+        ],
+        "user_query": user_input,
+        "original_problem": st.session_state.original_problem,
+        "mode": st.session_state.mode,
+        "follow_up_count": st.session_state.follow_up_count,
+        "task_type": st.session_state.task_type,
+    }
+
+    try:
+        result_state = chatbot.app.invoke(current_state)
+
+        if result_state.get("messages"):
+            last_message = result_state["messages"][-1]
+            st.session_state.task_type = result_state.get("task_type", "simple")
+            st.session_state.mode = result_state.get("mode", "simple")
+            st.session_state.follow_up_count = result_state.get("follow_up_count", 0)
+
+            return last_message.content
+    except Exception as e:
+        return f"⚠️ Error: {str(e)}"
+
+    return "No response generated."
+
+
+# ==========================================
+# Header
+# ==========================================
+st.title("🐟 Aquaponics Expert")
+st.caption("Intelligent assistant for diagnostics, design, and advice")
+
+
+# ==========================================
+# Sidebar
+# ==========================================
+with st.sidebar:
+    st.header("Settings")
+
+    # Theme toggle
+    theme_options = ["light", "dark"]
+    current_theme_idx = theme_options.index(st.session_state.theme)
+    new_theme = st.selectbox("Theme", options=theme_options, index=current_theme_idx)
+    if new_theme != st.session_state.theme:
+        st.session_state.theme = new_theme
         st.rerun()
 
+    st.divider()
 
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+    # Session info
+    if st.session_state.task_type != "simple":
+        st.info(f"Mode: {get_task_type_label(st.session_state.task_type)}")
+
+    # Clear chat
+    if st.button("Clear Chat", use_container_width=True):
+        clear_chat()
+        st.rerun()
+
+    st.divider()
+
+    # Examples
+    st.subheader("Examples")
+    st.markdown(
+        """
+        **Diagnostics**
+        - Fish gasping at surface
+        - Yellow plant leaves
+
+        **Design**
+        - Build system for tomatoes
+        - Best system for rooftop?
+
+        **Cost**
+        - Cost for 100L NFT system?
+        """
+    )
 
 
-prompt = st.chat_input("Describe your system or ask a question...")
-if prompt:
+# ==========================================
+# Chat Interface
+# ==========================================
+
+# Display chat history
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+# Chat input
+if prompt := st.chat_input("Ask about aquaponics..."):
+    # Add user message
     st.session_state.messages.append({"role": "user", "content": prompt})
+
+    # Display user message
     with st.chat_message("user"):
         st.markdown(prompt)
 
+    # Update original problem if this is the first message
+    if st.session_state.follow_up_count == 0:
+        st.session_state.original_problem = prompt
+
+    # Get response
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
-            response = chatbot.handle_turn(prompt)
+            response = invoke_chatbot(prompt)
             st.markdown(response)
 
+    # Add assistant response
     st.session_state.messages.append({"role": "assistant", "content": response})
+
+    # Show follow-up indicator if needed
+    if st.session_state.mode == "complex" and st.session_state.follow_up_count > 0:
+        st.info(f"💬 Please provide more details to continue...")
